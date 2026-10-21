@@ -1,0 +1,78 @@
+diff --git a/src/routes/_app.tsx b/src/routes/_app.tsx
+index 2b286e3..90a53f8 100644
+--- a/src/routes/_app.tsx
++++ b/src/routes/_app.tsx
+@@ -1,5 +1,6 @@
+ import { createFileRoute } from "@tanstack/react-router";
+ import { useEffect } from "react";
++import { useQueryClient } from "@tanstack/react-query";
+ import { RedirectToSignIn } from "@/lib/auth/gates";
+ import { useCurrentUserState } from "@/lib/auth/use-current-user";
+ import { AppShell } from "@/components/app-shell";
+@@ -11,10 +12,11 @@ export const Route = createFileRoute("/_app")({
+ 
+ function GuardedShell() {
+   const { user, isPending } = useCurrentUserState();
++  const qc = useQueryClient();
+ 
+   useEffect(() => {
+-    if (user) void ensureProfile();
+-  }, [user]);
++    if (user) void ensureProfile().then(() => qc.invalidateQueries());
++  }, [user, qc]);
+ 
+   if (isPending) {
+     return (
+diff --git a/src/routes/_app/add.tsx b/src/routes/_app/add.tsx
+index 09b4b33..4b2441f 100644
+--- a/src/routes/_app/add.tsx
++++ b/src/routes/_app/add.tsx
+@@ -1,8 +1,8 @@
+ import { createFileRoute, useNavigate } from "@tanstack/react-router";
+ import { useQueryClient } from "@tanstack/react-query";
+-import { useState, type FormEvent } from "react";
++import { useEffect, useState, type FormEvent } from "react";
+ import { toast } from "sonner";
+-import { addItem, closetInsights, listMyItems } from "@/lib/server/fashion";
++import { addItem, listMyItems } from "@/lib/server/fashion";
+ import { BRANDS, CATEGORIES, COLORS, SEASONS } from "@/lib/fashion";
+ import { Button } from "@/components/ui/button";
+ import { Field, Input, Textarea } from "@/components/ui/input";
+@@ -45,18 +45,26 @@ function AddPage() {
+     setImageUrl(url);
+   }
+ 
+-  async function onColor(next: string) {
++  const isWhiteish = (c: string) => c === "ivory" || c === "white" || c === "cream";
++
++  useEffect(() => {
++    let cancelled = false;
++    void (async () => {
++      if (category !== "top" || !isWhiteish(color)) {
++        setDupWarn(null);
++        return;
++      }
++      const items = (await qc.fetchQuery({ queryKey: ["my-items"], queryFn: () => listMyItems() })) ?? [];
++      const names = items.filter((i) => i.category === "top" && isWhiteish(i.color)).map((i) => i.title);
++      if (!cancelled) setDupWarn(names.length ? `You already have ${names.join(", ")} in the closet.` : null);
++    })();
++    return () => {
++      cancelled = true;
++    };
++  }, [category, color, qc]);
++
++  function onColor(next: string) {
+     setColor(next);
+-    const items = (await qc.fetchQuery({ queryKey: ["my-items"], queryFn: () => listMyItems() })) ?? [];
+-    const insights = await qc.fetchQuery({ queryKey: ["insights"], queryFn: () => closetInsights() });
+-    if ((next === "ivory" || next === "white") && category === "top" && insights.whiteTops >= 1) {
+-      const names = items
+-        .filter((i) => i.category === "top" && (i.color === "ivory" || i.color === "white"))
+-        .map((i) => i.title);
+-      setDupWarn(`You already have ${names.join(", ") || "a white top"} in the closet.`);
+-    } else {
+-      setDupWarn(null);
+-    }
+   }
+ 
+   async function onSubmit(e: FormEvent) {
