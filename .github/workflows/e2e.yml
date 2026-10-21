@@ -1,0 +1,67 @@
+name: E2E tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # weekly regression run, Monday 06:00 UTC
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the tests
+        uses: actions/checkout@v4
+
+      - name: Check out the app under test
+        uses: actions/checkout@v4
+        with:
+          repository: andrew84eg-ops/FashionGram
+          path: app
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install app dependencies
+        working-directory: app
+        # `npm ci` currently fails because package-lock.json is out of sync — see BUG_REPORTS.md FG-001.
+        run: npm install --no-audit --no-fund
+
+      - name: Start the app (local database, nothing external)
+        working-directory: app
+        run: nohup npm run dev > ../app.log 2>&1 &
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Wait for the app and warm it up
+        run: python scripts/wait_for_app.py http://127.0.0.1:8080
+
+      - name: Run the suite
+        run: python -m pytest --junitxml=reports/junit.xml
+
+      - name: Write the run summary
+        if: always()
+        run: python scripts/summary.py reports/junit.xml >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report, traces and app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            reports/
+            test-results/
+            app.log
+          retention-days: 14
